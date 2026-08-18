@@ -75,6 +75,14 @@ export const FileDiff = ({ size = 17, className }: P) => (
     <path d="M14 2v5h5" /><path d="M12 11v5" /><path d="M9.5 13.5h5" />
   </svg>
 );
+export const Upload = ({ size = 15, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5" />
+    <path d="M12 3v12" />
+  </svg>
+);
+
 export const Ban = ({ size = 15, className }: P) => (
   <svg {...base(size)} className={className}>
     <circle cx="12" cy="12" r="10" /><path d="m4.9 4.9 14.2 14.2" />

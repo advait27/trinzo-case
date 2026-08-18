@@ -8,7 +8,7 @@ import { PillGroup, SearchBox } from "./components/Toolbar";
 import { AiPanel } from "./components/AiPanel";
 import { listContainer, sectionIn, smooth, spring, still } from "./motion";
 import {
-  AlertTriangle, CheckCircle, Download, FileDiff, Moon, Printer, ShieldCheck, Sun,
+  AlertTriangle, CheckCircle, Download, FileDiff, Moon, Printer, ShieldCheck, Sun, Upload,
 } from "./icons";
 
 const PRIORITY_COLOR: Record<Priority, string> = {
@@ -36,6 +36,14 @@ function loadDecisions(key: string): { data: Record<string, DecisionRecord>; ok:
 
 export default function App({ payload }: { payload: Payload }) {
   const { manifest, findings, rules_run, not_checked } = payload;
+
+  // This sheet is one self-contained file. It is opened straight off disk at
+  // least as often as it is served, and it gets emailed around. A link to the
+  // upload page is only correct when that page is actually reachable, which is
+  // exactly when the server handed us this sheet at /r/<id>. Matching that path
+  // rather than merely checking for http: means a copy dropped on some other
+  // static host does not grow a dead "New review" button.
+  const servedByApp = /^\/r\/[0-9a-f]{12}\/?$/.test(window.location.pathname);
   const suggestions = payload.ai_suggestions ?? [];
   const reduce = useReducedMotion() ?? false;
   const key = storageKey(manifest.run_at_utc);
@@ -234,6 +242,12 @@ export default function App({ payload }: { payload: Payload }) {
             <button className="btn btn-primary" onClick={exportDecisions}>
               <Download /> Export decisions
             </button>
+            {servedByApp && (
+              <a className="btn" href="/"
+                 title="Upload a different protocol and report">
+                <Upload /> New review
+              </a>
+            )}
           </div>
         </div>
       </header>
@@ -421,6 +435,12 @@ export default function App({ payload }: { payload: Payload }) {
             qualified software, and not a validated record.
           </p>
           <p>Decisions are stored in this browser only. Export them to keep a copy.</p>
+          {!servedByApp && (
+            <p>
+              To review your own protocol and report, start the upload app with{" "}
+              <code>python -m protocolqc.server</code> and open the address it prints.
+            </p>
+          )}
           <div className="shortcuts">
             <span><kbd>j</kbd><kbd>k</kbd> move</span>
             <span><kbd>1</kbd>–<kbd>4</kbd> record a decision</span>

@@ -162,6 +162,9 @@ button { cursor: pointer; }
   transition: background .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 .btn:hover { background: var(--muted); }
+/* The "New review" action is an anchor rather than a button: it navigates, and
+   middle-click and open-in-new-tab should work as they would anywhere else. */
+a.btn { text-decoration: none; }
 .btn-primary {
   background: var(--navy); border-color: var(--navy); color: #fff;
 }

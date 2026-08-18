@@ -55,6 +55,15 @@ class TestReviewSheet(unittest.TestCase):
                     f"unexpected external URL in the review sheet: {url}",
                 )
 
+    def test_the_new_review_link_is_conditional(self):
+        """The sheet is one self-contained file that gets opened from disk and
+        emailed around. A link to the upload page is only correct when that page
+        is reachable, so it must be guarded by a check on the served path -- an
+        unconditional href="/" would be a dead link in every copy that is not
+        being served by the app."""
+        self.assertIn("/^\\/r\\/[0-9a-f]{12}", self.html,
+                      "the served-path guard is missing from the bundle")
+
     def test_embedded_data_round_trips(self):
         block = re.search(
             r'<script type="application/json" id="review-data">(.*?)</script>',

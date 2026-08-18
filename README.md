@@ -51,7 +51,14 @@ For anyone who is not going to use a command line, there is a local web app:
 
 Drop in a protocol and a report, press review, and you get the same review sheet.
 Completed runs are written to `runs/<id>/` with both source PDFs, the sheet and the
-JSON record, so a review can be reopened later.
+JSON record, so a review can be reopened later. A **New review** button in the sheet's
+header goes back to the upload page for the next pair.
+
+That button only appears when the sheet is being served by the app. The same file is
+also written to `out/` by the command line and gets opened from disk and emailed
+around, and an unconditional link to `/` would be a dead link in every one of those
+copies — so the sheet checks it is being served at `/r/<id>` before offering it, and
+otherwise tells you how to start the upload app instead.
 
 It binds to `127.0.0.1` only and has no authentication — it is a desk tool, not a
 service, and the documents it handles are usually confidential. It is built on
