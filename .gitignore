@@ -10,3 +10,6 @@ ui/node_modules/
 # repository is public. The two sample documents are kept because they are
 # marked fictional and the test suite reads them directly.
 practical-exercise-daniel-protocolqc.pdf
+
+# Local drafting, not part of the deliverable
+EMAIL-DRAFT.md
