@@ -133,6 +133,7 @@ class Handler(BaseHTTPRequestHandler):
         if want_ai or want_suggest:
             try:
                 ai_client = client_from_env(body.get("model") or None)
+                ai_client.notify = lambda msg: print(f"  ai: {msg}", flush=True)
             except AIUnavailable as exc:
                 warning = str(exc)
 

@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL = "meta/llama-3.3-70b-instruct"
@@ -51,9 +51,19 @@ class NvidiaClient:
     timeout: int = DEFAULT_TIMEOUT
     temperature: float = 0.0          # determinism matters more than variety here
     max_tokens: int = 4096
-    retries: int = 2
+    retries: int = 1
     key_origin: str = "supplied directly"
     usage: Usage = field(default_factory=Usage)
+    # Called with a short status string before and after each attempt. A hosted
+    # endpoint can take minutes on a cold model, and a tool that prints nothing
+    # for that long is indistinguishable from one that has hung -- during a
+    # demonstration that is the difference between "it is thinking" and "it is
+    # broken". The client does not choose how to display it; callers do.
+    notify: Optional[Callable[[str], None]] = None
+
+    def _say(self, message: str) -> None:
+        if self.notify is not None:
+            self.notify(message)
 
     def complete(self, system: str, user: str, *, json_object: bool = True) -> str:
         body: Dict[str, Any] = {
@@ -74,8 +84,12 @@ class NvidiaClient:
 
         last: Optional[Exception] = None
         for attempt in range(self.retries + 1):
+            label = f"calling {self.model}" + (f" (attempt {attempt + 1})" if attempt else "")
+            self._say(f"{label}, up to {self.timeout}s…")
+            started = time.time()
             try:
                 payload = self._post("/chat/completions", body)
+                self._say(f"replied in {time.time() - started:.0f}s")
                 self.usage.add(payload)
                 choices = payload.get("choices") or []
                 if not choices:
@@ -85,6 +99,8 @@ class NvidiaClient:
                 raise
             except Exception as exc:  # network, decode, transient 5xx
                 last = exc
+                self._say(f"attempt failed after {time.time() - started:.0f}s: "
+                          f"{type(exc).__name__}")
                 if attempt < self.retries:
                     time.sleep(1.5 * (attempt + 1))
         raise AIUnavailable(f"NVIDIA API call failed after {self.retries + 1} attempts: {last}")
@@ -220,8 +236,20 @@ def client_from_env(model: Optional[str] = None) -> NvidiaClient:
         api_key=key,
         model=model or resolve("PROTOCOLQC_AI_MODEL")[0] or DEFAULT_MODEL,
         base_url=resolve("NVIDIA_BASE_URL")[0] or BASE_URL,
+        timeout=_int_setting("PROTOCOLQC_AI_TIMEOUT", DEFAULT_TIMEOUT),
+        retries=_int_setting("PROTOCOLQC_AI_RETRIES", 1),
         key_origin=origin,
     )
+
+
+def _int_setting(name: str, default: int) -> int:
+    """A misconfigured number falls back to the default rather than crashing a
+    run: this is an optional path, and nothing here is worth failing over."""
+    try:
+        value = int(resolve(name)[0])
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def list_models(timeout: int = 15) -> List[str]:

@@ -315,6 +315,31 @@ honest error; and every place the tool reports which key it holds goes through `
 — `nvapi-...1234` plus where it was found. Enough to tell two keys apart in a log
 attached to a record, never enough to use one. Both are tested.
 
+**Measuring it changed the recommendation.** The first live call took 204 seconds for
+thirty tokens, which would have been an unpleasant surprise in front of an audience.
+Timing it properly: the default `meta/llama-3.3-70b-instruct` costs 204s cold and
+19-48s warm, while `meta/llama-3.1-8b-instruct` answers in 1.5s and passes the
+identical preflight -- same quote located, same fabricated quote refused. Locating
+text in a document is a mechanical task, so the small model is the better trade for
+`--ai`; a full run with suggestions drops from roughly three minutes to fifteen
+seconds. The default stays on the larger model because `--ai-suggest` is the one place
+capability might earn its keep, and two sample documents cannot settle that. Both are
+documented with the measurements rather than a preference.
+
+Two things the measurement exposed that were nothing to do with speed. The catalogue
+lists models that 404 at inference -- `nvidia/llama-3.1-nemotron-70b-instruct` is in
+`--list-models` and is not servable by this key -- and I had cited exactly that model
+in the README as a suggested alternative. Naming a model that does not work is worse
+than naming none. Fixed, and the error now says that being listed is not a guarantee.
+
+**Silence is a failure mode too.** Three attempts at a 120-second timeout meant a run
+could sit for six minutes printing nothing, which is indistinguishable from a hang.
+The client now takes a `notify` callback and announces each attempt and how long it
+took; the CLI sends it to stderr, the server to its console. Retries dropped from 2 to
+1, and both the timeout and the retry count are configurable from `.env` like
+everything else. The upload page no longer claims the call "can take up to a minute",
+because it measurably cannot.
+
 **A preflight, deliberately outside the test suite.** `python -m protocolqc.ai.check`
 makes one real call, then checks that the model's quote can be found in the source and
 that a fabricated quote is refused. It is not a unit test because a suite that needs a

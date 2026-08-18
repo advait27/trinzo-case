@@ -47,6 +47,9 @@ def main(argv=None) -> int:
             ai_client = client_from_env(args.ai_model)
             print(f"AI assistance: {ai_client.describe()}", file=sys.stderr)
             print(f"  key {ai_client.describe_key()}", file=sys.stderr)
+            # A hosted endpoint can sit on a cold model for minutes. Say what is
+            # happening rather than leaving a blank terminal.
+            ai_client.notify = lambda msg: print(f"  ai: {msg}", file=sys.stderr, flush=True)
         except AIUnavailable as exc:
             print(f"warning: {exc}", file=sys.stderr)
             print("Continuing without AI. The deterministic checks are unaffected.",

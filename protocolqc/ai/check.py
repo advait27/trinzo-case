@@ -97,8 +97,10 @@ def main(argv: Optional[list] = None) -> int:
         raw = client.complete(SYSTEM, TASK + numbered(_doc()))
     except AIUnavailable as exc:
         _bad(f"the API call did not succeed: {exc}")
-        print("\nIf the key was rejected, check it was pasted whole. If the model was")
-        print("not found, list what this endpoint offers:")
+        print("\nIf the key was rejected, check it was pasted whole. A 404 means the")
+        print("model is not servable by this key -- note that the catalogue lists")
+        print("models that still 404 at inference, so being in the list is not a")
+        print("guarantee. Confirmed working:  meta/llama-3.1-8b-instruct")
         print("    python -m protocolqc.ai.check --list-models")
         return 2
     elapsed = time.time() - started
@@ -111,7 +113,7 @@ def main(argv: Optional[list] = None) -> int:
     except Exception:
         _bad(f"the reply was not JSON: {raw[:120]!r}")
         print("\nThis model may not honour response_format. Try another:")
-        print("    python -m protocolqc.ai.check --model nvidia/llama-3.1-nemotron-70b-instruct")
+        print("    python -m protocolqc.ai.check --model meta/llama-3.1-8b-instruct")
         return 3
 
     # 4. The part that actually matters: does its quote survive the gate?

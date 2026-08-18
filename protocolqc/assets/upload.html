@@ -202,7 +202,7 @@
     ev.preventDefault();
     go.disabled = true; spin.classList.add('on');
     var ai = document.getElementById('ai').checked, sg = document.getElementById('suggest').checked;
-    show('info', ai || sg ? 'Reading documents and calling the model — this can take up to a minute…'
+    show('info', ai || sg ? 'Reading documents and calling the model…'
                           : 'Comparing documents…');
 
     Promise.all([b64(files.protocol), b64(files.report)]).then(function (pair) {

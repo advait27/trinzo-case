@@ -98,8 +98,34 @@ runs — so this is the only thing here that touches the live API.
 ```bash
 ./.venv/bin/python run.py --protocol a.pdf --report b.pdf --ai
 ./.venv/bin/python run.py --protocol a.pdf --report b.pdf --ai --ai-suggest
-./.venv/bin/python run.py ... --ai --ai-model nvidia/llama-3.1-nemotron-70b-instruct
+./.venv/bin/python run.py ... --ai --ai-model meta/llama-3.1-8b-instruct
 ```
+
+### Which model
+
+Measured against the live endpoint, on the same preflight, both located the quote
+correctly and both refused a fabricated one:
+
+| model | first call | warm |
+| --- | --- | --- |
+| `meta/llama-3.3-70b-instruct` (default) | 204s | 19–48s |
+| `meta/llama-3.1-8b-instruct` | 1.5s | 1.5s |
+
+Locating text in a document is a mechanical task, not a reasoning one, so the small
+model is the better trade for `--ai`: a full run with suggestions takes about 15
+seconds against roughly three minutes cold. The default stays on the larger model
+because `--ai-suggest` is the one place more capability might earn its keep, and that
+is not something two sample documents can settle. Override it per run with
+`--ai-model`, or for good in `.env`:
+
+    PROTOCOLQC_AI_MODEL=meta/llama-3.1-8b-instruct
+
+The first call to any model on a hosted endpoint can be slow while it is brought up.
+Run the preflight once before you need it.
+
+Being listed by `--list-models` does not guarantee a model is servable by a given key —
+`nvidia/llama-3.1-nemotron-70b-instruct` is in the catalogue and returns 404 at
+inference. The error says so rather than guessing.
 
 | flag | what the model is allowed to do |
 | --- | --- |
