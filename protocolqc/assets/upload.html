@@ -143,9 +143,12 @@
 
   fetch('/api/ai-status').then(function (r) { return r.json(); }).then(function (s) {
     var el = document.getElementById('ai-status');
-    if (s.available) { el.textContent = 'AI available — ' + s.provider + ' · ' + s.model; }
+    if (s.available) { el.textContent = 'AI key loaded — ' + s.provider + ' · ' + s.model
+                                       + (s.key ? ' · ' + s.key : ''); }
     else {
-      el.textContent = 'AI unavailable: NVIDIA_API_KEY is not set. The checks below run either way.';
+      el.textContent = 'AI off: no API key found. Put NVIDIA_API_KEY=... in a .env file '
+                     + 'at the project root and reload this page — no restart needed. '
+                     + 'The checks below run either way.';
       document.getElementById('ai').disabled = true;
       document.getElementById('suggest').disabled = true;
     }

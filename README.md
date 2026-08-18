@@ -19,6 +19,9 @@ python3 -m venv .venv
     --report   sample-b-verification-report-nv-200.pdf
 ```
 
+Or run the whole demonstration — the sample pair and the corrected pair, one after
+the other — with `./demo.sh`.
+
 Writes two files to `out/`:
 
 | file | for |
@@ -61,9 +64,38 @@ else. That is right for a known template and useless for a document someone has 
 uploaded — which is exactly the gap a model can fill without being trusted with any
 judgement.
 
-```bash
-export NVIDIA_API_KEY=nvapi-...        # from https://build.nvidia.com
+### Where the key goes
 
+Get one at [build.nvidia.com](https://build.nvidia.com), then put it in a `.env`
+file at the project root — that is the whole configuration step:
+
+```bash
+cp .env.example .env
+# then edit .env:  NVIDIA_API_KEY=nvapi-...
+```
+
+`.env` is gitignored, so the key stays out of the repository, out of terminal
+scrollback and out of shell history. It is read fresh on every call rather than
+once at startup, so the upload server picks up a new key without being
+restarted — save the file and reload the page.
+
+An exported `NVIDIA_API_KEY` environment variable works too and takes precedence,
+for CI or a container where that is the natural place for it.
+
+Check it before you rely on it:
+
+```bash
+./.venv/bin/python -m protocolqc.ai.check
+```
+
+That makes one real call, then confirms the model's quote can be found in the
+source document and that a fabricated quote is refused. It is not part of the
+test suite on purpose — a suite that needs a key and a network is a suite nobody
+runs — so this is the only thing here that touches the live API.
+
+### Using it
+
+```bash
 ./.venv/bin/python run.py --protocol a.pdf --report b.pdf --ai
 ./.venv/bin/python run.py --protocol a.pdf --report b.pdf --ai --ai-suggest
 ./.venv/bin/python run.py ... --ai --ai-model nvidia/llama-3.1-nemotron-70b-instruct
@@ -81,6 +113,9 @@ model output exactly as it applies to rule output.
 
 Without a key, both flags warn and the run continues — the deterministic checks are
 unaffected. The client is built on `urllib`, so this adds no dependency either.
+
+Every run that uses a key prints which one, masked (`nvapi-...1234`) and with the
+place it was found. Enough to tell two keys apart in a log, never enough to use one.
 
 ## What it found in the samples
 

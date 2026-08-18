@@ -46,6 +46,7 @@ def main(argv=None) -> int:
         try:
             ai_client = client_from_env(args.ai_model)
             print(f"AI assistance: {ai_client.describe()}", file=sys.stderr)
+            print(f"  key {ai_client.describe_key()}", file=sys.stderr)
         except AIUnavailable as exc:
             print(f"warning: {exc}", file=sys.stderr)
             print("Continuing without AI. The deterministic checks are unaffected.",

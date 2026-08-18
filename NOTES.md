@@ -297,11 +297,39 @@ Python 3.13, so uploads arrive base64-encoded in a JSON body rather than as mult
 ran it on the command line" and "I uploaded it" would be indefensible in a regulated
 setting, so there is one code path and both call it.
 
+**Where the key lives.** The first version read `NVIDIA_API_KEY` from the environment
+and nowhere else. That is the conventional answer and it is wrong for this tool. The
+person configuring it is a QA reviewer on a desk machine, not an operator with a
+secrets manager, and `export NVIDIA_API_KEY=nvapi-...` puts a live credential into
+terminal scrollback and `~/.zsh_history`, where it outlives the session and gets pasted
+into a screenshot. It also reads the environment once at startup, so the upload server
+has to be killed and restarted to change key.
+
+So the key resolves per call, from the environment first and then a gitignored `.env`.
+A key written into that file is live on the next request — save it, reload the page. No
+dependency was added for this; `python-dotenv` would be a second package to read six
+lines of text. Two details that follow from treating it as a credential rather than a
+setting: the parser does **not** strip trailing `# comments`, because silently
+truncating a key at a character it might contain produces a baffling 401 instead of an
+honest error; and every place the tool reports which key it holds goes through `mask()`
+— `nvapi-...1234` plus where it was found. Enough to tell two keys apart in a log
+attached to a record, never enough to use one. Both are tested.
+
+**A preflight, deliberately outside the test suite.** `python -m protocolqc.ai.check`
+makes one real call, then checks that the model's quote can be found in the source and
+that a fabricated quote is refused. It is not a unit test because a suite that needs a
+key and a network is a suite nobody runs, and a green checkout should never depend on
+whether the machine happens to be configured. The same reasoning applies in reverse:
+the key tests stub out the search path entirely, so configuring a real key cannot turn
+the suite red either.
+
 **What is not verified.** The AI path has 21 tests, all offline against a stub client,
 and the live HTTP plumbing is confirmed against the real endpoint (correct URL and auth
 header; 403 and 404 both produce clean, actionable errors). But **no inference call has
 ever been made** — there is no NVIDIA API key in this environment. The gate is tested;
-the model's actual behaviour on a real unfamiliar document is not. Before this went
+the model's actual behaviour on a real unfamiliar document is not. `ai/check.py`
+exists to make that first live call a deliberate step rather than a surprise during
+a demonstration. Before this went
 anywhere near real work it would need a corpus of genuinely different layouts, a
 measured rate of correct extraction, and a measured rate of suggestions that turn out
 to be noise.

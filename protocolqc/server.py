@@ -183,9 +183,18 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _ai_status(self) -> dict:
+        """Whether a key is *configured* -- deliberately not whether it works.
+        Confirming that needs a live call, and one on every page load would be
+        slow and would spend someone's quota to render a status line. The
+        wording downstream says "loaded", not "working", and
+        `python -m protocolqc.ai.check` is the thing that actually proves it.
+
+        Resolved per request rather than cached, so a key written into .env
+        while the server is running is picked up on the next page load."""
         try:
             client = client_from_env()
-            return {"available": True, "provider": "NVIDIA NIM", "model": client.model}
+            return {"available": True, "provider": "NVIDIA NIM",
+                    "model": client.model, "key": client.describe_key()}
         except AIUnavailable as exc:
             return {"available": False, "reason": str(exc)}
 
@@ -199,7 +208,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000, runs_dir: str | Path = "run
     print(f"  protocolqc upload server   http://{host}:{port}")
     print(f"  runs are written to        {Handler.config.runs_dir.resolve()}")
     print(f"  AI assistance              "
-          + (f"available ({status['model']})" if status.get("available") else "off (no NVIDIA_API_KEY)"))
+          + (f"key loaded, {status['model']}" if status.get("available")
+             else "off (no key — write one into .env and reload the page)"))
+    if status.get("key"):
+        print(f"                             {status['key']}")
     print("  decision support only — this tool does not determine pass or fail")
     print("=" * 72)
     try:

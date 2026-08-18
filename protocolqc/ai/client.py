@@ -13,7 +13,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL = "meta/llama-3.3-70b-instruct"
@@ -51,6 +52,7 @@ class NvidiaClient:
     temperature: float = 0.0          # determinism matters more than variety here
     max_tokens: int = 4096
     retries: int = 2
+    key_origin: str = "supplied directly"
     usage: Usage = field(default_factory=Usage)
 
     def complete(self, system: str, user: str, *, json_object: bool = True) -> str:
@@ -112,21 +114,113 @@ class NvidiaClient:
     def describe(self) -> str:
         return f"NVIDIA NIM · {self.model}"
 
+    def describe_key(self) -> str:
+        """Which key, and where it was found. Masked -- the tool never prints a
+        key in full, including into a console log a reviewer might later attach
+        to a record."""
+        return f"{mask(self.api_key)} (from {self.key_origin})"
+
+
+# ---- where the key comes from -------------------------------------------
+#
+# Two places, checked in this order:
+#   1. the NVIDIA_API_KEY environment variable
+#   2. a .env file at the project root (gitignored)
+#
+# The file exists because "export it in your shell" is a poor instruction on a
+# shared or demonstration machine: the key lands in terminal scrollback and in
+# shell history, and a server that read the environment once at startup has to
+# be killed and restarted to pick up a new one. Resolution happens per call, so
+# a key written into .env is live on the very next request.
+#
+# The environment still wins, because that is what CI and container runtimes
+# set, and a stale checked-out file should never quietly override them.
+
+ENV_FILENAMES = (".env.local", ".env")
+
+
+def _search_dirs() -> List[Path]:
+    """Directories searched for a .env file. A function rather than a constant
+    so tests can point it somewhere harmless -- a test that starts failing
+    because the machine it runs on happens to be configured is not a test."""
+    out: List[Path] = []
+    for d in (Path.cwd(), Path(__file__).resolve().parents[2]):
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def _parse_env_file(text: str) -> Dict[str, str]:
+    """Small KEY=value parser, rather than a dependency on python-dotenv. The
+    whole install story is "python, one dependency"; adding a second one to
+    read six lines of text would not be a good trade.
+
+    Deliberately does not strip trailing "# comments": a key is an opaque
+    string, and silently truncating one at a character it might contain would
+    produce a baffling 401 rather than an honest error."""
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        name, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        out[name.strip()] = value
+    return out
+
+
+def resolve(name: str) -> Tuple[str, str]:
+    """Return (value, where it came from). An empty value means "not configured
+    anywhere". The origin is reported so a run can say which key it used
+    without ever printing the key itself."""
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value, f"{name} environment variable"
+    for directory in _search_dirs():
+        for filename in ENV_FILENAMES:
+            path = directory / filename
+            try:
+                if not path.is_file():
+                    continue
+                found = _parse_env_file(path.read_text(encoding="utf-8")).get(name, "").strip()
+            except OSError:
+                continue
+            if found:
+                return found, str(path)
+    return "", ""
+
+
+def mask(key: str) -> str:
+    """Enough to tell two keys apart, not enough to use one. Everywhere the
+    tool reports which key it is holding goes through here."""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return f"{key[:6]}...{key[-4:]}"
+
+
+NO_KEY_MESSAGE = (
+    "No NVIDIA API key found. AI assistance is off; the deterministic checks "
+    "are unaffected. Get a key at https://build.nvidia.com, then either write "
+    "NVIDIA_API_KEY=nvapi-... into a .env file at the project root, or export "
+    "NVIDIA_API_KEY in the shell. A key in .env is picked up without a restart."
+)
+
 
 def client_from_env(model: Optional[str] = None) -> NvidiaClient:
-    """Build a client from NVIDIA_API_KEY. Raises AIUnavailable when unset, so
-    every caller has to handle the no-key case explicitly."""
-    key = os.environ.get("NVIDIA_API_KEY", "").strip()
+    """Build a client from a resolved key. Raises AIUnavailable when there is
+    none, so every caller has to handle the no-key case explicitly."""
+    key, origin = resolve("NVIDIA_API_KEY")
     if not key:
-        raise AIUnavailable(
-            "NVIDIA_API_KEY is not set. AI assistance is off; the deterministic "
-            "checks are unaffected. Get a key at https://build.nvidia.com and "
-            "export NVIDIA_API_KEY=nvapi-..."
-        )
+        raise AIUnavailable(NO_KEY_MESSAGE)
     return NvidiaClient(
         api_key=key,
-        model=model or os.environ.get("PROTOCOLQC_AI_MODEL", DEFAULT_MODEL),
-        base_url=os.environ.get("NVIDIA_BASE_URL", BASE_URL),
+        model=model or resolve("PROTOCOLQC_AI_MODEL")[0] or DEFAULT_MODEL,
+        base_url=resolve("NVIDIA_BASE_URL")[0] or BASE_URL,
+        key_origin=origin,
     )
 
 

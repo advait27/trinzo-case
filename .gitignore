@@ -13,3 +13,11 @@ practical-exercise-daniel-protocolqc.pdf
 
 # Local drafting, not part of the deliverable
 EMAIL-DRAFT.md
+
+# API keys. The tool reads NVIDIA_API_KEY from here when it is not in the
+# environment; .env.example is the committed template and holds no key.
+.env
+.env.local
+
+# Interview prep, not part of the deliverable
+PRESENTATION.md

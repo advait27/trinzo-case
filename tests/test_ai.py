@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
 from protocolqc import extract as ex
-from protocolqc.ai.client import AIUnavailable, NvidiaClient, client_from_env
+from protocolqc.ai import client as client_mod
+from protocolqc.ai.client import AIUnavailable, NvidiaClient, client_from_env, mask, resolve
 from protocolqc.ai.extract import parse_with_ai, parse_document as ai_parse_document
 from protocolqc.ai.locate import LocateStats, locate, locate_all, numbered
 from protocolqc.ai.suggest import suggest
@@ -233,19 +235,125 @@ class TestSuggestions(unittest.TestCase):
         self.assertTrue(notes)
 
 
-class TestClient(unittest.TestCase):
-    def test_missing_key_is_an_explicit_recoverable_error(self):
+class KeyEnvironment:
+    """Runs a block with the key environment fully controlled: no inherited
+    variables, and .env searched only inside a temporary directory.
+
+    Without this, every test below would pass or fail depending on whether the
+    machine running it happens to have a key configured -- which is exactly the
+    kind of test that goes green in CI and red on the one laptop that matters.
+    """
+
+    NAMES = ("NVIDIA_API_KEY", "PROTOCOLQC_AI_MODEL", "NVIDIA_BASE_URL")
+
+    def __init__(self, env_file_text=None, **environ):
+        self.text = env_file_text
+        self.environ = environ
+
+    def __enter__(self):
         import os
-        saved = os.environ.pop("NVIDIA_API_KEY", None)
-        try:
+        import tempfile
+        self._saved = {n: os.environ.pop(n, None) for n in self.NAMES}
+        for name, value in self.environ.items():
+            os.environ[name] = value
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        if self.text is not None:
+            (self.dir / ".env").write_text(self.text, encoding="utf-8")
+        self._saved_dirs = client_mod._search_dirs
+        client_mod._search_dirs = lambda: [self.dir]
+        return self
+
+    def __exit__(self, *exc):
+        import os
+        client_mod._search_dirs = self._saved_dirs
+        self._tmp.cleanup()
+        for name in self.NAMES:
+            os.environ.pop(name, None)
+        for name, value in self._saved.items():
+            if value is not None:
+                os.environ[name] = value
+        return False
+
+
+class TestKeyResolution(unittest.TestCase):
+    """Where the key comes from. This is ordinary configuration handling, but
+    it is the one part of the AI path a user touches by hand, so the failure
+    modes are worth pinning down."""
+
+    def test_no_key_anywhere_names_both_places_to_put_one(self):
+        with KeyEnvironment():
             with self.assertRaises(AIUnavailable) as ctx:
                 client_from_env()
-            self.assertIn("NVIDIA_API_KEY", str(ctx.exception))
-            self.assertIn("deterministic checks are unaffected", str(ctx.exception))
-        finally:
-            if saved is not None:
-                os.environ["NVIDIA_API_KEY"] = saved
+        message = str(ctx.exception)
+        self.assertIn(".env", message)
+        self.assertIn("NVIDIA_API_KEY", message)
+        self.assertIn("deterministic checks", message)
 
+    def test_a_key_in_a_dotenv_file_is_found(self):
+        with KeyEnvironment("NVIDIA_API_KEY=nvapi-from-the-file-1234\n") as env:
+            client = client_from_env()
+            self.assertEqual(client.api_key, "nvapi-from-the-file-1234")
+            self.assertEqual(client.key_origin, str(env.dir / ".env"))
+
+    def test_the_environment_beats_the_file(self):
+        # A checked-out file must never override what a runtime injected.
+        with KeyEnvironment("NVIDIA_API_KEY=from-file\n", NVIDIA_API_KEY="from-env"):
+            client = client_from_env()
+            self.assertEqual(client.api_key, "from-env")
+            self.assertIn("environment", client.key_origin)
+
+    def test_file_syntax_people_actually_write(self):
+        text = (
+            "# a comment\n"
+            "\n"
+            '  export NVIDIA_API_KEY = "nvapi-quoted-and-exported"  \n'
+            "PROTOCOLQC_AI_MODEL='some/model'\n"
+            "NOT_A_LINE\n"
+        )
+        with KeyEnvironment(text):
+            client = client_from_env()
+            self.assertEqual(client.api_key, "nvapi-quoted-and-exported")
+            self.assertEqual(client.model, "some/model")
+
+    def test_an_explicit_model_argument_still_wins(self):
+        with KeyEnvironment("NVIDIA_API_KEY=k\nPROTOCOLQC_AI_MODEL=from/file\n"):
+            self.assertEqual(client_from_env("cli/model").model, "cli/model")
+
+    def test_an_empty_value_is_not_a_key(self):
+        with KeyEnvironment("NVIDIA_API_KEY=\n"):
+            with self.assertRaises(AIUnavailable):
+                client_from_env()
+
+    def test_a_missing_variable_resolves_to_nothing_rather_than_raising(self):
+        with KeyEnvironment("NVIDIA_API_KEY=k\n"):
+            self.assertEqual(resolve("NVIDIA_BASE_URL"), ("", ""))
+
+
+class TestKeyIsNeverPrinted(unittest.TestCase):
+    """The tool prints which key it is using so a run is traceable. It must
+    never print enough of one to be usable -- console output gets pasted into
+    tickets and attached to records."""
+
+    KEY = "nvapi-SECRETSECRETSECRETSECRET1234"
+
+    def test_mask_hides_the_middle(self):
+        masked = mask(self.KEY)
+        self.assertNotIn("SECRET", masked)
+        self.assertNotEqual(masked, self.KEY)
+        self.assertTrue(masked.startswith("nvapi-"))
+        self.assertTrue(masked.endswith("1234"))
+
+    def test_a_short_key_reveals_nothing_at_all(self):
+        self.assertEqual(mask("abc123"), "******")
+
+    def test_describe_key_says_where_without_saying_what(self):
+        described = NvidiaClient(api_key=self.KEY, key_origin="/tmp/.env").describe_key()
+        self.assertNotIn("SECRET", described)
+        self.assertIn("/tmp/.env", described)
+
+
+class TestClient(unittest.TestCase):
     def test_temperature_is_zero_by_default(self):
         # Reproducibility matters more than variety for an extraction task.
         self.assertEqual(NvidiaClient(api_key="x").temperature, 0.0)
