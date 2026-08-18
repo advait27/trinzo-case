@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>protocolqc — upload documents for review</title>
+<style>/*__CSS__*/</style>
+<style>
+  body { display:flex; align-items:flex-start; justify-content:center; padding:40px 20px; }
+  .wrap { width:100%; max-width:760px; }
+  .head { display:flex; align-items:center; gap:var(--s3); margin-bottom:var(--s5); }
+  .head h1 { font-size:20px; margin:0; letter-spacing:-.01em; }
+  .head p { margin:2px 0 0; font-size:13px; color:var(--fg-subtle); }
+  .card2 { background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--r-lg);
+           box-shadow:var(--shadow-sm); padding:var(--s5); margin-bottom:var(--s4); }
+  .drops { display:grid; gap:var(--s3); grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+  .drop { border:1.5px dashed var(--border); border-radius:var(--r-lg); padding:var(--s5) var(--s4);
+          text-align:center; transition:border-color .18s ease, background .18s ease; cursor:pointer; }
+  .drop:hover, .drop.over { border-color:var(--blue); background:var(--surface-2); }
+  .drop.set { border-style:solid; border-color:var(--green); background:color-mix(in srgb,var(--green) 6%,transparent); }
+  .drop h3 { margin:0 0 4px; font-size:14px; }
+  .drop .role { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--fg-subtle); margin-bottom:var(--s2); }
+  .drop .file { font-family:var(--mono); font-size:11.5px; color:var(--fg-muted); word-break:break-all; margin-top:var(--s2); }
+  .drop input { position:absolute; width:1px; height:1px; opacity:0; }
+  .opt-row { margin-top:var(--s4); padding-top:var(--s4); border-top:1px solid var(--border-soft); }
+  .check { display:flex; gap:var(--s3); align-items:flex-start; padding:var(--s3) 0; }
+  .check input { margin-top:3px; width:16px; height:16px; accent-color:var(--navy); }
+  .check label { font-size:13px; }
+  .check .why { display:block; font-size:12px; color:var(--fg-muted); margin-top:2px; }
+  .actions { display:flex; gap:var(--s3); align-items:center; margin-top:var(--s4); }
+  .actions .btn { padding:10px var(--s5); font-size:13.5px; }
+  .msg { margin-top:var(--s4); padding:var(--s3) var(--s4); border-radius:var(--r); font-size:13px; display:none; }
+  .msg.show { display:block; }
+  .msg.err { background:var(--hi-soft); color:var(--hi-ink); border:1px solid color-mix(in srgb,var(--hi) 35%,transparent); }
+  .msg.info { background:var(--lo-soft); color:var(--fg-muted); border:1px solid color-mix(in srgb,var(--lo) 35%,transparent); }
+  .msg.warn { background:var(--med-soft); color:var(--fg-muted); border:1px solid color-mix(in srgb,var(--med) 35%,transparent); }
+  .spinner { width:15px; height:15px; border:2px solid var(--border); border-top-color:var(--navy);
+             border-radius:50%; animation:spin .7s linear infinite; display:none; }
+  .spinner.on { display:inline-block; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration:2s; } }
+  .ai-off { font-size:12px; color:var(--fg-subtle); margin-top:var(--s2); }
+  ul.small { margin:var(--s2) 0 0; padding-left:18px; font-size:12.5px; color:var(--fg-muted); }
+  ul.small li { margin-bottom:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <span class="brand-mark" style="width:36px;height:36px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/>
+        <path d="M14 2v5h5"/><path d="M12 11v5"/><path d="M9.5 13.5h5"/>
+      </svg>
+    </span>
+    <div>
+      <h1>Protocol-to-report review</h1>
+      <p>Upload a test protocol and the verification report meant to satisfy it.</p>
+    </div>
+  </div>
+
+  <div class="boundary" role="note" style="margin-top:0">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+      <path d="m9 12 2 2 4-4"/>
+    </svg>
+    <div>
+      <strong>This is not a pass/fail decision.</strong>
+      <p>The tool reports differences between two documents, with a citation to the exact text
+         behind each one, for a qualified reviewer to judge. Files stay on this machine.</p>
+    </div>
+  </div>
+
+  <form class="card2" id="form">
+    <div class="drops">
+      <label class="drop" id="drop-protocol" for="f-protocol">
+        <div class="role">Reference</div>
+        <h3>Test protocol</h3>
+        <div style="font-size:12.5px;color:var(--fg-subtle)">PDF — the document that sets the requirements</div>
+        <div class="file" id="name-protocol">Click or drop a file here</div>
+        <input type="file" id="f-protocol" accept="application/pdf,.pdf">
+      </label>
+
+      <label class="drop" id="drop-report" for="f-report">
+        <div class="role">Under review</div>
+        <h3>Verification report</h3>
+        <div style="font-size:12.5px;color:var(--fg-subtle)">PDF — the document being checked against it</div>
+        <div class="file" id="name-report">Click or drop a file here</div>
+        <input type="file" id="f-report" accept="application/pdf,.pdf">
+      </label>
+    </div>
+
+    <div class="opt-row" id="ai-block">
+      <div class="check">
+        <input type="checkbox" id="ai">
+        <label for="ai">
+          Use AI to read unfamiliar layouts
+          <span class="why">The built-in parser only recognises tables it was built for, and refuses
+            anything else rather than guess. With this on, a model locates the fields and table cells
+            instead — it returns quoted text and a line number, and every quote is then found in your
+            document before it is used. Anything it cannot point at is discarded.</span>
+        </label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="suggest">
+        <label for="suggest">
+          Also ask for advisory observations
+          <span class="why">Differences the rules do not model, such as method wording. These are listed
+            separately from the checks, are not verified by anything beyond their quotes, and may be
+            wrong.</span>
+        </label>
+      </div>
+      <div class="ai-off" id="ai-status">checking AI availability…</div>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary" id="go" disabled>Review documents</button>
+      <span class="spinner" id="spin"></span>
+      <span style="font-size:12.5px;color:var(--fg-subtle)" id="hint">Choose both documents to continue</span>
+    </div>
+
+    <div class="msg" id="msg"></div>
+  </form>
+
+  <div class="card2">
+    <strong style="font-size:13px">What happens when you press Review</strong>
+    <ul class="small">
+      <li>Both PDFs are read on this machine and compared by 19 deterministic checks.</li>
+      <li>Every flag carries the exact text from both documents, with page and line.</li>
+      <li>Each quote is re-read from the source before anything is shown. If one does not match, the run is abandoned rather than published.</li>
+      <li>You get a review sheet to work through, and a JSON audit record with the file hashes.</li>
+      <li>Nothing is uploaded anywhere <em>unless</em> you tick an AI option, which sends the extracted document text to NVIDIA's API.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function () {
+  var files = { protocol: null, report: null };
+  var go = document.getElementById('go'), msg = document.getElementById('msg'),
+      spin = document.getElementById('spin'), hint = document.getElementById('hint');
+
+  fetch('/api/ai-status').then(function (r) { return r.json(); }).then(function (s) {
+    var el = document.getElementById('ai-status');
+    if (s.available) { el.textContent = 'AI available — ' + s.provider + ' · ' + s.model; }
+    else {
+      el.textContent = 'AI unavailable: NVIDIA_API_KEY is not set. The checks below run either way.';
+      document.getElementById('ai').disabled = true;
+      document.getElementById('suggest').disabled = true;
+    }
+  }).catch(function () {});
+
+  ['protocol', 'report'].forEach(function (role) {
+    var input = document.getElementById('f-' + role), drop = document.getElementById('drop-' + role);
+    input.addEventListener('change', function () { take(role, input.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (e) {
+      drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+    });
+    ['dragleave', 'drop'].forEach(function (e) {
+      drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+    });
+    drop.addEventListener('drop', function (ev) {
+      if (ev.dataTransfer.files && ev.dataTransfer.files[0]) take(role, ev.dataTransfer.files[0]);
+    });
+  });
+
+  function take(role, file) {
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name)) return show('err', file.name + ' is not a PDF.');
+    files[role] = file;
+    document.getElementById('name-' + role).textContent =
+      file.name + '  (' + Math.round(file.size / 1024) + ' KB)';
+    document.getElementById('drop-' + role).classList.add('set');
+    ready();
+  }
+
+  function ready() {
+    var ok = files.protocol && files.report;
+    go.disabled = !ok;
+    hint.textContent = ok ? 'Both documents ready' : 'Choose both documents to continue';
+  }
+
+  function show(kind, text) {
+    msg.className = 'msg show ' + kind;
+    msg.textContent = text;
+  }
+
+  function b64(file) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { res(fr.result.split(',')[1]); };
+      fr.onerror = rej;
+      fr.readAsDataURL(file);
+    });
+  }
+
+  document.getElementById('form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    go.disabled = true; spin.classList.add('on');
+    var ai = document.getElementById('ai').checked, sg = document.getElementById('suggest').checked;
+    show('info', ai || sg ? 'Reading documents and calling the model — this can take up to a minute…'
+                          : 'Comparing documents…');
+
+    Promise.all([b64(files.protocol), b64(files.report)]).then(function (pair) {
+      return fetch('/api/review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          protocol: { name: files.protocol.name, data: pair[0] },
+          report: { name: files.report.name, data: pair[1] },
+          ai: ai || sg, suggest: sg
+        })
+      });
+    }).then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, body: d }; });
+    }).then(function (res) {
+      spin.classList.remove('on'); go.disabled = false;
+      if (!res.ok) {
+        var t = res.body.error || 'The review could not be completed.';
+        if (res.body.hint) t += '  ' + res.body.hint;
+        return show('err', t);
+      }
+      if (res.body.warning) { show('warn', res.body.warning); }
+      window.location.href = res.body.url;
+    }).catch(function (e) {
+      spin.classList.remove('on'); go.disabled = false;
+      show('err', 'Request failed: ' + e);
+    });
+  });
+})();
+</script>
+</body></html>

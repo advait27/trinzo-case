@@ -1,0 +1,3 @@
+# Needed only to regenerate the corrected fixture PDFs, not to run the tool.
+#   ./.venv/bin/pip install -r fixtures/requirements.txt
+reportlab>=4.0

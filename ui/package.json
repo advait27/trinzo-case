@@ -1,0 +1,22 @@
+{
+  "name": "protocolqc-ui",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Review sheet UI. Bundled to a single self-contained file that protocolqc inlines.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "dependencies": {
+    "framer-motion": "^13.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

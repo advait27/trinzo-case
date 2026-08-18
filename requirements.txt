@@ -1,0 +1,4 @@
+pypdf>=5.0
+
+# Regenerating the corrected fixture PDFs additionally needs reportlab --
+# see fixtures/requirements.txt. The tool itself does not.

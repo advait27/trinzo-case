@@ -1,0 +1,255 @@
+"""The AI path.
+
+Every test here runs offline against a stub client. That is deliberate: a test
+suite that needs a network call and an API key is a test suite nobody runs, and
+the properties worth pinning are about *what the tool does with model output*,
+not about the model.
+
+The property under test throughout: a model can only ever cause the tool to
+show text that is genuinely in the source document. Everything else it says is
+discarded.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+
+from protocolqc import extract as ex
+from protocolqc.ai.client import AIUnavailable, NvidiaClient, client_from_env
+from protocolqc.ai.extract import parse_with_ai, parse_document as ai_parse_document
+from protocolqc.ai.locate import LocateStats, locate, locate_all, numbered
+from protocolqc.ai.suggest import suggest
+from protocolqc.model import Document, Finding
+from protocolqc.rules import run_rules
+from protocolqc.table import TableParseError
+from protocolqc.verify import verify_citations
+
+from support import layout_text, load_docs, rebuild, replace_once
+
+
+class StubClient(NvidiaClient):
+    """Returns canned replies. Records what it was asked, so a test can assert
+    the model was never called on the deterministic path."""
+
+    def __init__(self, reply: str):
+        super().__init__(api_key="stub", model="stub/model")
+        self.reply = reply
+        self.prompts: list[str] = []
+
+    def complete(self, system: str, user: str, *, json_object: bool = True) -> str:
+        self.prompts.append(user)
+        return self.reply
+
+
+class TestLocateGate(unittest.TestCase):
+    """locate() is the boundary. Nothing a model says gets past it unchecked."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.protocol, cls.report = load_docs()
+
+    def test_real_quote_yields_real_offsets(self):
+        span = locate(self.protocol, "≥ 5.0 N", 20)
+        self.assertIsNotNone(span)
+        self.assertEqual(self.protocol.slice(span.page, span.line, span.start, span.end), span.text)
+
+    def test_span_carries_the_documents_characters_not_the_models(self):
+        # The model writes single spaces; the document has two.
+        span = locate(self.protocol, "Version: 2.0", 5)
+        self.assertEqual(span.text, "Version:  2.0")
+
+    def test_invented_quote_is_refused(self):
+        stats = LocateStats()
+        self.assertIsNone(
+            locate(self.protocol, "All tests met their acceptance criteria", 12, stats=stats))
+        self.assertEqual(stats.not_found, 1)
+        self.assertIn("does not occur", stats.discarded[0])
+
+    def test_a_wrong_line_number_is_corrected_not_trusted(self):
+        span = locate(self.protocol, "Tensile bond strength", 99)
+        self.assertEqual(span.line, 20)
+
+    def test_quote_split_across_lines_becomes_two_spans(self):
+        spans = locate_all(
+            self.protocol, "Tensile pull to failure in 37°C saline bath; Instron 5943", 20)
+        self.assertEqual(len(spans), 2)
+        for s in spans:
+            self.assertEqual(self.protocol.slice(s.page, s.line, s.start, s.end), s.text)
+
+    def test_numbered_view_does_not_alter_the_document(self):
+        first = numbered(self.protocol).split("\n")[0]
+        self.assertTrue(first.endswith(self.protocol.raw_line(1, 1)))
+
+
+class TestAiExtraction(unittest.TestCase):
+    """A document the parser refuses, recovered via the model."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.protocol_doc, cls.report_doc = load_docs()
+        # Break the header the deterministic table parser keys on.
+        cls.odd = rebuild(
+            cls.protocol_doc,
+            replace_once(layout_text(cls.protocol_doc), "Test ID", "Ref no."),
+        )
+
+    def test_the_deterministic_parser_refuses_it(self):
+        with self.assertRaises(TableParseError):
+            ex.parse_document(self.odd)
+
+    def test_without_a_client_it_still_refuses(self):
+        with self.assertRaises(TableParseError):
+            ai_parse_document(self.odd, None, is_report=False)
+
+    def _reply_for(self, doc) -> str:
+        rows = []
+        for tid, name, crit, n in (("T1", "Tensile bond strength", "≥ 5.0 N", "30"),
+                                   ("T2", "Coating particulate", "≤ 20 particles", "30")):
+            line = next(i for i, l in enumerate(doc.pages[0], 1) if l.strip().startswith(tid + " "))
+            rows.append({
+                "test_id": {"value": tid, "line": line},
+                "test_name": {"value": name, "line": line},
+                "criterion": {"value": crit, "line": line},
+                "sample_size": {"value": n, "line": line},
+            })
+        return json.dumps({
+            "fields": [{"key": "version", "value": "2.0", "line": 5},
+                       {"key": "document", "value": "NV-200-TP-014", "line": 3}],
+            "sections": [{"number": 4, "title": "Reporting", "line": 29}],
+            "tests": rows,
+        })
+
+    def test_model_located_structure_produces_a_usable_parsed_doc(self):
+        client = StubClient(self._reply_for(self.odd))
+        parsed, report = parse_with_ai(self.odd, client, is_report=False, reason="test")
+        self.assertEqual(report.source, "ai-assisted")
+        self.assertEqual(parsed.test_ids(), ["T1", "T2"])
+        self.assertEqual(parsed.rows()["T1"].text("criterion"), "≥ 5.0 N")
+        self.assertEqual(ex.version(parsed), "2.0")
+
+    def test_every_cell_from_the_model_is_addressed_to_real_text(self):
+        client = StubClient(self._reply_for(self.odd))
+        parsed, _ = parse_with_ai(self.odd, client, is_report=False, reason="test")
+        for row in parsed.table.rows:
+            for name, cell in row.cells.items():
+                for span in cell.spans:
+                    with self.subTest(row=row.text("test_id"), cell=name):
+                        self.assertEqual(
+                            self.odd.slice(span.page, span.line, span.start, span.end), span.text)
+
+    def test_invented_cells_are_dropped_not_shown(self):
+        reply = json.loads(self._reply_for(self.odd))
+        reply["tests"][0]["criterion"] = {"value": "≥ 99.0 N", "line": 20}   # not in the document
+        reply["fields"].append({"key": "date", "value": "1 January 2099", "line": 6})
+        client = StubClient(json.dumps(reply))
+        parsed, report = parse_with_ai(self.odd, client, is_report=False, reason="test")
+
+        self.assertEqual(parsed.rows()["T1"].text("criterion"), "")   # dropped entirely
+        self.assertNotIn("Date", parsed.fields)
+        self.assertEqual(len(report.discarded), 2)
+        self.assertTrue(any("99.0" in d for d in report.discarded))
+
+    def test_rules_run_on_ai_extraction_and_citations_verify(self):
+        client = StubClient(self._reply_for(self.odd))
+        parsed, _ = parse_with_ai(self.odd, client, is_report=False, reason="test")
+        report = ex.parse_document(self.report_doc)
+        findings, outcomes = run_rules(parsed, report)
+        result = verify_citations(findings, {"protocol": self.odd, "report": self.report_doc})
+        self.assertEqual(result.failures, [])
+        self.assertTrue(findings)
+
+    def test_deterministic_documents_never_reach_the_model(self):
+        client = StubClient("{}")
+        parsed, report = ai_parse_document(self.protocol_doc, client, is_report=False)
+        self.assertEqual(report.source, "deterministic")
+        self.assertEqual(client.prompts, [])
+
+
+class TestSuggestions(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.protocol_doc, cls.report_doc = load_docs()
+        cls.protocol = ex.parse_document(cls.protocol_doc)
+        cls.report = ex.parse_document(cls.report_doc)
+
+    def _run(self, suggestions):
+        client = StubClient(json.dumps({"suggestions": suggestions}))
+        return suggest(self.protocol, self.report, client)
+
+    def test_a_grounded_suggestion_survives_and_is_labelled(self):
+        out, notes = self._run([{
+            "scope": "T2",
+            "observation": "The protocol names a particulate counting method the report does not restate.",
+            "reviewer_action": "Confirm the counting method used.",
+            "protocol_quote": "Particulate count per USP", "protocol_line": 20,
+            "report_quote": "Max 12 particles", "report_line": 17,
+        }])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].source, "ai-suggested")
+        self.assertEqual(out[0].rule_id, "AI")
+        self.assertEqual(out[0].id, "AI-001")
+        self.assertEqual({c.doc for c in out[0].citations}, {"protocol", "report"})
+        self.assertIn("may be wrong", out[0].uncertainty)
+
+    def test_a_suggestion_with_invented_quotes_is_dropped(self):
+        out, notes = self._run([{
+            "scope": "T2", "observation": "Something differs here.",
+            "protocol_quote": "the protocol requires perfection", "protocol_line": 20,
+            "report_quote": "the report agrees entirely", "report_line": 17,
+        }])
+        self.assertEqual(out, [])
+        self.assertTrue(any("no quote could be found" in n for n in notes))
+
+    def test_verdict_language_is_rejected_rather_than_reworded(self):
+        for phrase in ("This test fails the criterion.",
+                       "The report is non-compliant with the protocol.",
+                       "T2 passed as recorded."):
+            with self.subTest(phrase):
+                out, notes = self._run([{
+                    "scope": "T2", "observation": phrase,
+                    "protocol_quote": "Coating particulate", "protocol_line": 20,
+                }])
+                self.assertEqual(out, [])
+                self.assertTrue(any("pass/fail language" in n for n in notes))
+
+    def test_suggestions_are_capped(self):
+        many = [{"scope": "document", "observation": f"Difference number {i}.",
+                 "protocol_quote": "Coating particulate", "protocol_line": 20} for i in range(20)]
+        out, _ = self._run(many)
+        self.assertLessEqual(len(out), 6)
+
+    def test_model_failure_does_not_break_the_review(self):
+        class Broken(StubClient):
+            def complete(self, system, user, *, json_object=True):
+                raise AIUnavailable("network down")
+        out, notes = suggest(self.protocol, self.report, Broken("{}"))
+        self.assertEqual(out, [])
+        self.assertTrue(any("unavailable" in n for n in notes))
+
+    def test_malformed_json_is_reported_not_guessed(self):
+        out, notes = suggest(self.protocol, self.report, StubClient("I think T1 looks fine."))
+        self.assertEqual(out, [])
+        self.assertTrue(notes)
+
+
+class TestClient(unittest.TestCase):
+    def test_missing_key_is_an_explicit_recoverable_error(self):
+        import os
+        saved = os.environ.pop("NVIDIA_API_KEY", None)
+        try:
+            with self.assertRaises(AIUnavailable) as ctx:
+                client_from_env()
+            self.assertIn("NVIDIA_API_KEY", str(ctx.exception))
+            self.assertIn("deterministic checks are unaffected", str(ctx.exception))
+        finally:
+            if saved is not None:
+                os.environ["NVIDIA_API_KEY"] = saved
+
+    def test_temperature_is_zero_by_default(self):
+        # Reproducibility matters more than variety for an extraction task.
+        self.assertEqual(NvidiaClient(api_key="x").temperature, 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
