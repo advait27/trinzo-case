@@ -348,16 +348,36 @@ whether the machine happens to be configured. The same reasoning applies in reve
 the key tests stub out the search path entirely, so configuring a real key cannot turn
 the suite red either.
 
-**What is not verified.** The AI path has 21 tests, all offline against a stub client,
-and the live HTTP plumbing is confirmed against the real endpoint (correct URL and auth
-header; 403 and 404 both produce clean, actionable errors). But **no inference call has
-ever been made** — there is no NVIDIA API key in this environment. The gate is tested;
-the model's actual behaviour on a real unfamiliar document is not. `ai/check.py`
-exists to make that first live call a deliberate step rather than a surprise during
-a demonstration. Before this went
-anywhere near real work it would need a corpus of genuinely different layouts, a
-measured rate of correct extraction, and a measured rate of suggestions that turn out
-to be noise.
+**The gate caught a real hallucination on the first run against a live model.** This
+section previously said no inference call had ever been made. It has now, and the most
+useful thing to come out of it was a failure. Asked for advisory suggestions on the
+sample pair, `meta/llama-3.3-70b-instruct` returned a suggestion about the T1 criterion
+quoting the protocol as `"© 5.0 N"` and the report as `"© 4.5 N"`. The observation was
+right — that discrepancy is real, and rule R-12 finds it — but the model had corrupted
+`≥` into `©` in both quotes. Neither string occurs in either document, both were
+refused, and the whole suggestion was dropped:
+
+    ai: suggestion 2 dropped: no quote could be found in either document
+    ai: suggestion 2 protocol quote: '© 5.0 N' does not occur in the document
+
+That is the design working exactly as intended and it is worth being precise about
+why. The model was not caught being *wrong*; it was caught being unable to point at
+what it claimed. A tool that showed a reviewer `"© 5.0 N"` as a quotation from a
+controlled document would be worse than useless, and no amount of prompt instruction
+prevents a model mangling a character. Only checking against the source does.
+
+The 8B model produced a different, more debatable rejection on the same run: it quoted
+`"Per ISO 10993-5"`, which the PDF splits across two lines, so the text is not present
+character for character and the suggestion was dropped. That one was arguably a good
+suggestion lost to a line break. Both directions are recorded in the run notes rather
+than hidden, and erring towards dropping is the right way round for this failure mode.
+
+**What is still not verified.** The AI path has 21 tests, all offline against a stub
+client, and the live plumbing is now confirmed end to end. But one run against two
+synthetic documents is an anecdote, not a measurement. The gate is tested; the model's
+behaviour on a corpus of genuinely unfamiliar layouts is not. Before this went anywhere
+near real work it would need that corpus, a measured rate of correct extraction, and a
+measured rate of suggestions that turn out to be noise.
 
 ## 12. What I would do next, in order
 

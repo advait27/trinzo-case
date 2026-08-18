@@ -106,10 +106,10 @@ runs — so this is the only thing here that touches the live API.
 Measured against the live endpoint, on the same preflight, both located the quote
 correctly and both refused a fabricated one:
 
-| model | first call | warm |
-| --- | --- | --- |
-| `meta/llama-3.3-70b-instruct` (default) | 204s | 19–48s |
-| `meta/llama-3.1-8b-instruct` | 1.5s | 1.5s |
+| model | first call | warm | full run with `--ai-suggest` |
+| --- | --- | --- | --- |
+| `meta/llama-3.3-70b-instruct` (default) | 204s | 19–48s | 98s |
+| `meta/llama-3.1-8b-instruct` | 1.5s | 1.5s | 15s |
 
 Locating text in a document is a mechanical task, not a reasoning one, so the small
 model is the better trade for `--ai`: a full run with suggestions takes about 15
