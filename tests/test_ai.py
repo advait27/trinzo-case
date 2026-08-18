@@ -22,7 +22,7 @@ from protocolqc.ai.client import AIUnavailable, NvidiaClient, client_from_env, m
 from protocolqc.ai.extract import parse_with_ai, parse_document as ai_parse_document
 from protocolqc.ai.locate import LocateStats, locate, locate_all, numbered
 from protocolqc.ai.suggest import suggest
-from protocolqc.model import Document, Finding
+from protocolqc.model import Citation, Document, Finding
 from protocolqc.rules import run_rules
 from protocolqc.table import TableParseError
 from protocolqc.verify import verify_citations
@@ -274,6 +274,77 @@ class KeyEnvironment:
             if value is not None:
                 os.environ[name] = value
         return False
+
+
+class TestHyphenWrappedQuotes(unittest.TestCase):
+    """A PDF breaks a word across lines at a hyphen. table.py rejoins those when
+    it builds a cell, so locate() has to recognise the same thing or the two
+    disagree about whether a piece of text is in the document -- which is how a
+    perfectly good citation gets thrown away.
+
+    Observed live: a model quoted "Per ISO 10993-5" from the protocol's T5 row
+    and the suggestion was dropped, because the document has "Per ISO 10993-" on
+    one line and "5" in the same column on the next.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.protocol, cls.report = load_docs()
+
+    def _spans(self, quote, line_hint=26):
+        return locate_all(self.protocol, quote, line_hint, 1, LocateStats(), "probe")
+
+    def test_the_wrapped_cell_is_found(self):
+        spans = self._spans("Per ISO 10993-5")
+        self.assertEqual([s.text for s in spans], ["Per ISO 10993-", "5"])
+
+    def test_the_spans_carry_the_documents_characters_not_the_models(self):
+        # The quote asked for "10993-5"; what comes back is what is really
+        # there, on two lines, which is the whole point of the indirection.
+        for span in self._spans("Per ISO 10993-5"):
+            self.assertEqual(span.text, self.protocol.slice(1, span.line, span.start, span.end))
+
+    def test_a_fabricated_continuation_is_still_refused(self):
+        # The head exists; the tail does not. Nothing may be located.
+        self.assertEqual(self._spans("Per ISO 10993-9"), [])
+
+    def test_a_continuation_in_the_wrong_column_is_refused(self):
+        # "03" really does occur on the next line, inside "BC-NV200-03" -- but
+        # in a different column, so it is not this cell's continuation. Without
+        # the column test this would produce a citation pointing at the wrong
+        # place, which is worse than producing none.
+        self.assertEqual(self._spans("Per ISO 10993-03"), [])
+
+    def test_ordinary_quotes_are_unaffected(self):
+        spans = self._spans("Reactivity grade \u2264 2")
+        self.assertEqual([s.text for s in spans], ["Reactivity grade \u2264 2"])
+
+    def test_the_wrapped_citation_survives_the_citation_gate(self):
+        """The gate re-checks every span independently. If it disagreed with
+        locate() about a two-span citation, the whole run would abort with a
+        CitationError -- so the two must be tested together, not just apart."""
+        spans = self._spans("Per ISO 10993-5")
+        finding = Finding(id="X-1", rule_id="R-00", rule_title="probe",
+                          category="criteria", priority="low", scope="T5",
+                          statement="s", basis="b", reviewer_action="a",
+                          citations=[Citation("protocol", spans, "AI-located quote")])
+        result = verify_citations([finding], {"protocol": self.protocol,
+                                              "report": self.report})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.spans_checked, 2)
+
+    def test_the_quote_is_shown_on_two_lines_not_glued_together(self):
+        # The document does not contain "Per ISO 10993-5" as continuous text,
+        # so the reviewer must not be shown it as though it did.
+        quote = Citation("protocol", self._spans("Per ISO 10993-5")).quote
+        self.assertEqual(quote, "Per ISO 10993-\n5")
+
+    def test_a_hyphenated_word_that_is_not_wrapped_still_matches_on_one_line(self):
+        # The document reference is full of hyphens and sits entirely on one
+        # line. The wrap handling must not fire and split it in two.
+        spans = locate_all(self.report, "NV-200-VR-014", None, 1, LocateStats(), "probe")
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].text, "NV-200-VR-014")
 
 
 class TestKeyResolution(unittest.TestCase):

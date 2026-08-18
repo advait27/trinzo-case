@@ -366,11 +366,24 @@ what it claimed. A tool that showed a reviewer `"© 5.0 N"` as a quotation from 
 controlled document would be worse than useless, and no amount of prompt instruction
 prevents a model mangling a character. Only checking against the source does.
 
-The 8B model produced a different, more debatable rejection on the same run: it quoted
-`"Per ISO 10993-5"`, which the PDF splits across two lines, so the text is not present
-character for character and the suggestion was dropped. That one was arguably a good
-suggestion lost to a line break. Both directions are recorded in the run notes rather
-than hidden, and erring towards dropping is the right way round for this failure mode.
+The 8B model produced a different rejection on the same run, and that one turned out to
+be **my** bug rather than the model's. It quoted `"Per ISO 10993-5"` from the T5 row,
+which the PDF splits as `"Per ISO 10993-"` on one line and `"5"` in the same column on
+the next. `table.py` already rejoins hyphenated wraps when it builds a cell (§3), but
+`locate.py` did not, so two components of the same tool disagreed about whether that
+text is in the document — and a perfectly good citation was thrown away.
+
+`locate.py` now handles the wrap, under two conditions that keep it honest. The hyphen
+must end the text on its line, and the continuation must resume in the **same column**,
+which is what a wrapped cell does and what an unrelated token on the next line does
+not. That second condition is load-bearing: `"03"` genuinely occurs on the following
+line, inside `BC-NV200-03`, so without the column test `"Per ISO 10993-03"` would bind
+to it and produce a citation pointing at the wrong place — worse than producing none.
+There is a test for exactly that.
+
+The quote is still shown on two lines, `"Per ISO 10993-\n5"`, because that is what the
+document contains. Recovering the citation is not a licence to present the text as
+continuous prose when it is not.
 
 **What is still not verified.** The AI path has 21 tests, all offline against a stub
 client, and the live plumbing is now confirmed end to end. But one run against two

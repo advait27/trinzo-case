@@ -75,6 +75,49 @@ def locate(doc: Document, quote: str, line_hint: Optional[int], page: int = 1,
     return None
 
 
+# A hyphen between two alphanumerics is where a PDF breaks a word across lines
+# ("Per ISO 10993-" + "5"). table.py already rejoins these when it builds a cell;
+# this is the same rule on the search side, so the two do not disagree about
+# whether a piece of text is in the document.
+_HYPHEN_WRAP = re.compile(r"(?<=[0-9A-Za-z])-(?=[0-9A-Za-z])")
+
+# How far the continuation may sit from the head's left edge. A wrapped cell
+# resumes in its own column, so this is nearly zero in practice; a couple of
+# characters absorbs the odd extraction wobble without letting an unrelated
+# token on the next line pass as a continuation.
+COLUMN_SLACK = 2
+
+
+def _hyphen_wrapped(doc: Document, quote: str, page: int) -> List[Span]:
+    """Spans for a quote whose word was split across a line break by a hyphen.
+
+    Two conditions, both required. The hyphen must end the text on its line --
+    otherwise the head is a coincidental prefix of something longer. And the
+    continuation must resume in the same column, which is what a wrapped table
+    cell does and what an unrelated token on the next line does not. Without
+    the column test, "Per ISO 10993-5" would happily bind to any stray "5"
+    below it and produce a citation pointing at the wrong place.
+    """
+    lines = doc.pages[page - 1]
+    for m in _HYPHEN_WRAP.finditer(quote):
+        head, tail = quote[: m.end()], quote[m.end():]
+        rx_head, rx_tail = _pattern(head), _pattern(tail)
+        if rx_head is None or rx_tail is None:
+            continue
+        for idx, raw in enumerate(lines, start=1):
+            if idx >= len(lines):
+                break
+            mh = rx_head.search(raw)
+            # The hyphen has to be the last thing in its cell on this line.
+            if not mh or raw[mh.end(): mh.end() + 1].strip():
+                continue
+            for mt in rx_tail.finditer(lines[idx]):
+                if abs(mt.start() - mh.start()) <= COLUMN_SLACK:
+                    return [doc.span(page, idx, mh.start(), mh.end()),
+                            doc.span(page, idx + 1, mt.start(), mt.end())]
+    return []
+
+
 def locate_all(doc: Document, quote: str, line_hint: Optional[int], page: int = 1,
                stats: Optional[LocateStats] = None, what: str = "value") -> List[Span]:
     """As locate(), but a quote that wraps across lines yields one Span per
@@ -86,6 +129,12 @@ def locate_all(doc: Document, quote: str, line_hint: Optional[int], page: int = 
         if stats:
             stats.located += 1
         return [single]
+
+    hyphenated = _hyphen_wrapped(doc, quote, page)
+    if hyphenated:
+        if stats:
+            stats.located += 1
+        return hyphenated
 
     words = quote.split()
     if len(words) < 4:

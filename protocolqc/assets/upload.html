@@ -202,8 +202,22 @@
     ev.preventDefault();
     go.disabled = true; spin.classList.add('on');
     var ai = document.getElementById('ai').checked, sg = document.getElementById('suggest').checked;
-    show('info', ai || sg ? 'Reading documents and calling the model…'
-                          : 'Comparing documents…');
+
+    // A hosted model can take anywhere from two seconds to two minutes,
+    // depending on whether it is already warm. A message that does not change
+    // for ninety seconds is indistinguishable from a page that has hung, so
+    // count the wait out loud and say what is normal before anyone has to ask.
+    var started = Date.now(), timer = null;
+    function tick() {
+      var secs = Math.round((Date.now() - started) / 1000);
+      var msg = 'Reading documents and calling the model — ' + secs + 's';
+      if (secs > 25) { msg += '. A model that is not already warm can take a couple of minutes.'; }
+      show('info', msg);
+    }
+    function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+    if (ai || sg) { tick(); timer = setInterval(tick, 1000); }
+    else { show('info', 'Comparing documents…'); }
 
     Promise.all([b64(files.protocol), b64(files.report)]).then(function (pair) {
       return fetch('/api/review', {
@@ -217,7 +231,7 @@
     }).then(function (r) {
       return r.json().then(function (d) { return { ok: r.ok, body: d }; });
     }).then(function (res) {
-      spin.classList.remove('on'); go.disabled = false;
+      stopTimer(); spin.classList.remove('on'); go.disabled = false;
       if (!res.ok) {
         var t = res.body.error || 'The review could not be completed.';
         if (res.body.hint) t += '  ' + res.body.hint;
@@ -226,7 +240,7 @@
       if (res.body.warning) { show('warn', res.body.warning); }
       window.location.href = res.body.url;
     }).catch(function (e) {
-      spin.classList.remove('on'); go.disabled = false;
+      stopTimer(); spin.classList.remove('on'); go.disabled = false;
       show('err', 'Request failed: ' + e);
     });
   });
